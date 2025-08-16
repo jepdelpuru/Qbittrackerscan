@@ -21,15 +21,64 @@ TAG_HR = "Hit & Run"
 # Define el tiempo mínimo de subida en HORAS para cada tracker.
 # La clave debe ser una parte ÚNICA de la URL del tracker.
 TRACKER_RULES = {
-    'meloinvento.li': 168,
-    'meloinvento.li': 96,
-    'meloinvento.org': 170,
-    'meloinvento.club': 72,
-    'meloinvento.com': 48,
-    'meloinvento.eu': 168,
-    'meloinvento.cx': 72,
-    'tracker.meloinvento.org': 72
+    'xxxxxx.li': 168,
+    'xxxxxx.li': 96,
+    'xxxxxxx.org': 170,
+    'xxxxxxx.xxx': 72,
+    'xxxxxxx.com': 48,
+    'xxxxxx.eu': 168,
+    'xxxxxxx.cx': 72,
+    'tracker.xxxxxx.org': 72
 }
+
+# --- DICCIONARIO DE ETIQUETAS POR TRACKER (EMOJI + NOMBRE) ---
+# Define el emoji para cada tracker. La clave debe ser una parte ÚNICA de la URL.
+# El script creará una etiqueta con el formato "EMOJI NombreTracker"
+TRACKER_EMOJIS = {
+    # --- Trackers Privados y Semi-Privados ---
+    "xxxxxxxx.xxx": "🌀",
+    "xxxxxxxx.xxx": "🎯",
+    "xxxxxxxx.xxx": "🏛️",
+    "xxxxx.xxxxx": "🫏",
+    "bitporn.eu": "🍆",
+    "tracker.happyfappy.org": "😈",
+    "ssl.bootytape.com": "🍑",
+    "rintor.org": "🪙",
+    "xxxxxxxxx.xxx": "⚡️",
+    "xxxxxx.xxxx": "🌍",
+    "xxxxx.xxx": "🛡️",
+
+    # --- Trackers Públicos en Español ---
+    "divxtotal.in": "🇪🇸",
+    "elitetorrent.li": "🇪🇸",
+    "epublibre.org": "📚",
+    "frozen-layer.com": "❄️",
+    "gamestorrents.fm": "🎮",
+    "moviesdvdr.co": "📀",
+    "opensharing.org": "👐",
+    "rintor.net": "🌐",
+    "wolfmax4k.org": "🐺",
+
+    # --- Trackers Públicos Generales ---
+    "1337x.to": "🏴‍☠️",
+    "bitru.org": "🇷🇺",
+    "bitsearch.to": "🔎",
+    "rapidzona.org": "⏩",
+    "torrent-pirat.com": "🦜",
+    "traht.org": "🇷🇺",
+
+    # --- Trackers Públicos (Contenido Adulto) ---
+    "myporn.club": "🔞",
+    "onejav.com": "🇯🇵",
+    "pornotorrent.eu": "🌶️",
+    "pornrips.to": "💦",
+    "sexy-pics.org": "📸",
+    "sosulki.info": "🍭",
+    "sukebei.nyaa.si": "😼",
+    "xxxclub.to": "♣️",
+    "xxxtor.com": "💋"
+}
+
 
 # --- LÓGICA DEL SCRIPT ---
 
@@ -49,11 +98,11 @@ except Exception as e:
     print(f"❌ Ha ocurrido un error inesperado al conectar: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Crear las etiquetas si no existen
-tags_a_crear = [tag for tag in [TAG_BORRADO, TAG_HR] if tag not in client.torrents_tags()]
-if tags_a_crear:
-    client.torrents_create_tags(tags=tags_a_crear)
-    print(f"🏷️  Etiquetas creadas: {', '.join(tags_a_crear)}")
+# Crear las etiquetas de gestión si no existen
+tags_gestion_a_crear = [tag for tag in [TAG_BORRADO, TAG_HR] if tag not in client.torrents_tags()]
+if tags_gestion_a_crear:
+    client.torrents_create_tags(tags=tags_gestion_a_crear)
+    print(f"🏷️  Etiquetas de gestión creadas: {', '.join(tags_gestion_a_crear)}")
 
 print("🔎 Escaneando todos los torrents para aplicar reglas...")
 
@@ -61,26 +110,37 @@ print("🔎 Escaneando todos los torrents para aplicar reglas...")
 torrents_a_etiquetar_borrado = []
 torrents_a_etiquetar_hr = []
 torrents_a_desetiquetar_hr = []
+torrents_a_desetiquetar_borrado = []
+# NUEVO: Diccionario para agrupar torrents por su nueva etiqueta de tracker
+torrents_a_etiquetar_por_tracker = {}
 
 # Obtener todos los torrents
 all_torrents = client.torrents_info()
 
 # Analizar cada torrent
 for torrent in all_torrents:
-    existing_tags = torrent.tags.split(',') if torrent.tags else []
+    existing_tags = [tag.strip() for tag in torrent.tags.split(',')] if torrent.tags else []
 
-    # --- LÓGICA 1: TORRENTS NO REGISTRADOS ("BORRADOS") ---
-    if TAG_BORRADO not in existing_tags:
-        for tracker_info in torrent.trackers:
-            msg = tracker_info['msg'].lower()
-            status = tracker_info['status']
-            
-            is_unregistered = status == 4 and ("not registered" in msg or "unregistered" in msg or "no registrado" in msg)
+    # --- LÓGICA 1: GESTIÓN DE TORRENTS NO REGISTRADOS ("BORRADOS") ---
+    is_currently_unregistered = False
+    for tracker_info in torrent.trackers:
+        msg = tracker_info['msg'].lower()
+        status = tracker_info['status']
+        
+        # Comprueba si algún tracker da el error específico
+        if status == 4 and ("not registered" in msg or "unregistered" in msg or "no registrado" in msg or "expected digit in bencoded string" in msg):
+            is_currently_unregistered = True
+            break # Si uno falla, marcamos el torrent como fallido y salimos del bucle
 
-            if is_unregistered:
-                torrents_a_etiquetar_borrado.append(torrent)
-                # Una vez detectado, no hace falta seguir mirando más trackers para este torrent
-                break 
+    has_borrado_tag = TAG_BORRADO in existing_tags
+
+    # Decidir si añadir o quitar la etiqueta
+    if is_currently_unregistered and not has_borrado_tag:
+        # El torrent está fallando ahora y no tiene la etiqueta -> Añadirla
+        torrents_a_etiquetar_borrado.append(torrent)
+    elif not is_currently_unregistered and has_borrado_tag:
+        # El torrent funciona bien ahora, pero tenía la etiqueta -> Quitarla
+        torrents_a_desetiquetar_borrado.append(torrent)
 
     # --- LÓGICA 2: GESTIÓN DE HIT & RUN (H&R) ---
     for tracker_key, required_hours in TRACKER_RULES.items():
@@ -89,15 +149,23 @@ for torrent in all_torrents:
             is_hr_completed = seeding_time_hours >= required_hours
             has_hr_tag = TAG_HR in existing_tags
 
-            # AÑADIR etiqueta H&R: No ha cumplido el tiempo Y no tiene la etiqueta.
             if not is_hr_completed and not has_hr_tag:
                 torrents_a_etiquetar_hr.append(torrent)
 
-            # QUITAR etiqueta H&R: Ya ha cumplido el tiempo Y todavía tiene la etiqueta.
             elif is_hr_completed and has_hr_tag:
                 torrents_a_desetiquetar_hr.append(torrent)
             
-            # La regla de H&R ya ha aplicado, pasamos al siguiente torrent
+            break
+            
+    # --- LÓGICA 3: ETIQUETADO AUTOMÁTICO POR TRACKER ---
+    for domain, emoji in TRACKER_EMOJIS.items():
+        if domain in torrent.tracker:
+            tag_name = f"{emoji} {domain}"
+            if tag_name not in existing_tags:
+                if tag_name not in torrents_a_etiquetar_por_tracker:
+                    torrents_a_etiquetar_por_tracker[tag_name] = []
+                torrents_a_etiquetar_por_tracker[tag_name].append(torrent)
+            # Una vez encontrado el tracker, pasamos al siguiente torrent
             break
 
 print("⚙️  Escaneo finalizado. Aplicando cambios...")
@@ -111,6 +179,15 @@ if torrents_a_etiquetar_borrado:
     client.torrents_add_tags(tags=TAG_BORRADO, torrent_hashes=hashes)
     print(f"\n🆕 Se aplicó la etiqueta '{TAG_BORRADO}' a {len(hashes)} torrent(s):")
     for torrent in torrents_a_etiquetar_borrado:
+        print(f"  - {torrent.name[:80]}")
+    acciones_realizadas = True
+
+# 2. Quitar etiqueta de "Tracker Borrado" por estar solucionado
+if torrents_a_desetiquetar_borrado:
+    hashes = [t.hash for t in torrents_a_desetiquetar_borrado]
+    client.torrents_remove_tags(tags=TAG_BORRADO, torrent_hashes=hashes)
+    print(f"\n🔄 Se quitó la etiqueta '{TAG_BORRADO}' a {len(hashes)} torrent(s) que volvieron a comunicar:")
+    for torrent in torrents_a_desetiquetar_borrado:
         print(f"  - {torrent.name[:80]}")
     acciones_realizadas = True
 
@@ -131,6 +208,29 @@ if torrents_a_desetiquetar_hr:
     for torrent in torrents_a_desetiquetar_hr:
         print(f"  - {torrent.name[:80]}")
     acciones_realizadas = True
+
+# 4. NUEVO: Crear y aplicar etiquetas por tracker
+if torrents_a_etiquetar_por_tracker:
+    print(f"\n🎨 Se van a aplicar {len(torrents_a_etiquetar_por_tracker)} tipo(s) de etiquetas de tracker:")
+    # Obtener todas las etiquetas que qBittorrent conoce actualmente
+    all_current_tags = [t.strip() for t in client.torrents_tags()]
+    # Filtrar para encontrar solo las que necesitamos crear
+    all_current_tags_set = {t.strip() for t in client.torrents_tags()}
+    new_tags_to_create = [tag for tag in torrents_a_etiquetar_por_tracker.keys() if tag.strip() not in all_current_tags_set]
+
+    
+    if new_tags_to_create:
+        client.torrents_create_tags(tags=new_tags_to_create)
+        print(f"  - Se han creado {len(new_tags_to_create)} nuevas etiquetas de tracker en qBittorrent.")
+
+    # Aplicar las etiquetas a los torrents correspondientes
+    for tag_name, torrents_list in torrents_a_etiquetar_por_tracker.items():
+        if torrents_list:
+            hashes = [t.hash for t in torrents_list]
+            client.torrents_add_tags(tags=tag_name, torrent_hashes=hashes)
+            print(f"  - Etiqueta '{tag_name}' aplicada a {len(hashes)} torrent(s).")
+    acciones_realizadas = True
+
 
 # --- REPORTE FINAL ---
 print("\n" + "─" * 70)
